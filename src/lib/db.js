@@ -1,3 +1,6 @@
+const dns = require("dns");
+dns.setDefaultResultOrder("ipv4first");
+
 const url = new URL(process.env.DATABASE_URL);
 
 const knex = require("knex")({
@@ -9,6 +12,8 @@ const knex = require("knex")({
     password: decodeURIComponent(url.password),
     database: url.pathname.replace(/^\//, ""),
     ssl: url.searchParams.get("sslaccept") === "strict" ? { rejectUnauthorized: true } : undefined,
+    enableKeepAlive: true,
+    flags: ["-FOUND_ROWS"],
   },
   pool: { min: 0, max: 10 },
   postProcessResponse: (result) => {
