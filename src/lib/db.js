@@ -1,6 +1,15 @@
+const url = new URL(process.env.DATABASE_URL);
+
 const knex = require("knex")({
   client: "mysql2",
-  connection: process.env.DATABASE_URL,
+  connection: {
+    host: url.hostname,
+    port: parseInt(url.port) || 3306,
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    database: url.pathname.replace(/^\//, ""),
+    ssl: url.searchParams.get("sslaccept") === "strict" ? { rejectUnauthorized: true } : undefined,
+  },
   pool: { min: 0, max: 10 },
   postProcessResponse: (result) => {
     const boolFields = ["status", "isBig", "isThumb", "isRead"];
