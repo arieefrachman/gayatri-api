@@ -1,4 +1,4 @@
-const prisma = require("../lib/prisma");
+const db = require("../lib/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
@@ -12,7 +12,7 @@ async function login(req, res, next) {
       return res.status(422).json({ error: "Email and password required" });
     }
 
-    const admin = await prisma.adminUser.findUnique({ where: { email } });
+    const admin = await db("admin_users").where({ email }).first();
     if (!admin) {
       return res.status(401).json({ error: "Invalid credentials" });
     }

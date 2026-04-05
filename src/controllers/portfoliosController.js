@@ -1,13 +1,20 @@
-const prisma = require("../lib/prisma");
+const db = require("../lib/db");
 const { uploadToR2, deleteFromR2 } = require("../lib/uploadToR2");
+
+async function withImages(portfolios) {
+  if (!portfolios.length) return portfolios;
+  const ids = portfolios.map((p) => p.id);
+  const images = await db("portfolio_images").whereIn("portfolioId", ids);
+  for (const p of portfolios) {
+    p.images = images.filter((img) => img.portfolioId === p.id);
+  }
+  return portfolios;
+}
 
 async function getAll(_req, res, next) {
   try {
-    const items = await prisma.portfolio.findMany({
-      where: { status: true },
-      orderBy: { sort: "asc" },
-      include: { images: true },
-    });
+    const items = await db("portfolios").where({ status: true }).orderBy("sort", "asc");
+    await withImages(items);
     res.json(items);
   } catch (err) {
     next(err);
@@ -17,8 +24,9 @@ async function getAll(_req, res, next) {
 async function getOne(req, res, next) {
   try {
     const id = parseInt(req.params.id);
-    const item = await prisma.portfolio.findUnique({ where: { id }, include: { images: true } });
+    const item = await db("portfolios").where({ id }).first();
     if (!item) return res.status(404).json({ error: "Not found" });
+    item.images = await db("portfolio_images").where({ portfolioId: id });
     res.json(item);
   } catch (err) {
     next(err);
@@ -27,10 +35,8 @@ async function getOne(req, res, next) {
 
 async function adminGetAll(_req, res, next) {
   try {
-    const items = await prisma.portfolio.findMany({
-      orderBy: { sort: "asc" },
-      include: { images: true },
-    });
+    const items = await db("portfolios").orderBy("sort", "asc");
+    await withImages(items);
     res.json(items);
   } catch (err) {
     next(err);
@@ -40,34 +46,31 @@ async function adminGetAll(_req, res, next) {
 async function adminCreate(req, res, next) {
   try {
     const { title, type, description, sort, status } = req.body;
-    const portfolio = await prisma.portfolio.create({
-      data: {
-        title,
-        type,
-        description,
-        sort: parseInt(sort) || 0,
-        status: status !== undefined ? Boolean(JSON.parse(status)) : true,
-      },
+    const [portfolioId] = await db("portfolios").insert({
+      title,
+      type,
+      description,
+      sort: parseInt(sort) || 0,
+      status: status !== undefined ? Boolean(JSON.parse(status)) : true,
+      updatedAt: new Date(),
     });
 
     if (req.files && req.files.length > 0) {
       const uploaded = await Promise.all(
         req.files.map((f) => uploadToR2(f.buffer, f.originalname, f.mimetype, "portfolios"))
       );
-      await prisma.portfolioImage.createMany({
-        data: uploaded.map((url, idx) => ({
-          portfolioId: portfolio.id,
+      await db("portfolio_images").insert(
+        uploaded.map((url, idx) => ({
+          portfolioId,
           path: url,
           isBig: idx === 0,
           isThumb: idx === 1,
-        })),
-      });
+        }))
+      );
     }
 
-    const result = await prisma.portfolio.findUnique({
-      where: { id: portfolio.id },
-      include: { images: true },
-    });
+    const result = await db("portfolios").where({ id: portfolioId }).first();
+    result.images = await db("portfolio_images").where({ portfolioId });
     res.status(201).json(result);
   } catch (err) {
     next(err);
@@ -79,36 +82,36 @@ async function adminUpdate(req, res, next) {
     const id = parseInt(req.params.id);
     const { title, type, description, sort, status } = req.body;
 
-    await prisma.portfolio.update({
-      where: { id },
-      data: {
-        title,
-        type,
-        description,
-        sort: parseInt(sort) || 0,
-        status: status !== undefined ? Boolean(JSON.parse(status)) : undefined,
-      },
-    });
+    const data = {
+      title,
+      type,
+      description,
+      sort: parseInt(sort) || 0,
+      updatedAt: new Date(),
+    };
+    if (status !== undefined) data.status = Boolean(JSON.parse(status));
+    await db("portfolios").where({ id }).update(data);
 
     if (req.files && req.files.length > 0) {
-      const oldImages = await prisma.portfolioImage.findMany({ where: { portfolioId: id } });
+      const oldImages = await db("portfolio_images").where({ portfolioId: id });
       await Promise.all(oldImages.map((img) => deleteFromR2(img.path)));
-      await prisma.portfolioImage.deleteMany({ where: { portfolioId: id } });
+      await db("portfolio_images").where({ portfolioId: id }).del();
 
       const uploaded = await Promise.all(
         req.files.map((f) => uploadToR2(f.buffer, f.originalname, f.mimetype, "portfolios"))
       );
-      await prisma.portfolioImage.createMany({
-        data: uploaded.map((url, idx) => ({
+      await db("portfolio_images").insert(
+        uploaded.map((url, idx) => ({
           portfolioId: id,
           path: url,
           isBig: idx === 0,
           isThumb: idx === 1,
-        })),
-      });
+        }))
+      );
     }
 
-    const result = await prisma.portfolio.findUnique({ where: { id }, include: { images: true } });
+    const result = await db("portfolios").where({ id }).first();
+    result.images = await db("portfolio_images").where({ portfolioId: id });
     res.json(result);
   } catch (err) {
     next(err);
@@ -118,9 +121,9 @@ async function adminUpdate(req, res, next) {
 async function adminDelete(req, res, next) {
   try {
     const id = parseInt(req.params.id);
-    const images = await prisma.portfolioImage.findMany({ where: { portfolioId: id } });
+    const images = await db("portfolio_images").where({ portfolioId: id });
     await Promise.all(images.map((img) => deleteFromR2(img.path)));
-    await prisma.portfolio.delete({ where: { id } });
+    await db("portfolios").where({ id }).del();
     res.json({ message: "Deleted" });
   } catch (err) {
     next(err);
